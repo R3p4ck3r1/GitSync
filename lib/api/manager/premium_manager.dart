@@ -17,7 +17,7 @@ class PremiumManager {
   }
 
   Future<bool> _readPremiumStatus() async {
-    return
+    return true ||
     // kDebugMode ||
     await repoManager.getBool(StorageKey.repoman_hasGHSponsorPremium);
   }

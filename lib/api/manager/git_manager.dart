@@ -116,6 +116,28 @@ class GitManager {
   ];
   static bool isNetworkUnavailableError(String message) => _networkUnavailablePatterns.any((p) => message.toLowerCase().contains(p.toLowerCase()));
 
+  static final Set<String> _knownGoodHostnames = {
+    'github.com',
+    'gitea.com',
+    'gitlab.com',
+    'bitbucket.org',
+    'codeberg.org',
+  };
+
+  static final RegExp _dnsHostnameRegex = RegExp(
+    r'(?:failed to resolve address for|could not resolve host|name resolution failed for|failed host lookup for?)\s+[''"]?([^\s:''"]+)',
+    caseSensitive: false,
+  );
+
+  static String? _extractHostname(String message) {
+    return _dnsHostnameRegex.firstMatch(message)?.group(1);
+  }
+
+  static bool isDnsErrorOnKnownHost(String message) {
+    final hostname = _extractHostname(message);
+    return hostname != null && _knownGoodHostnames.contains(hostname.toLowerCase());
+  }
+
   static Codec<String, String> stringToBase64 = utf8.fuse(base64);
 
   static FutureOr<T?> _runWithLock<T>(
@@ -152,6 +174,11 @@ class GitManager {
             pendingNetworkError = (e, stackTrace);
             return null;
           }
+          if (isDnsErrorOnKnownHost(errorMsg)) {
+            Logger.gmLog(type: type, "Network unavailable");
+            pendingNetworkError = (e, stackTrace);
+            return null;
+          }
           if (isNetworkUnavailableError(errorMsg) && !await hasNetworkConnection()) {
             Logger.gmLog(type: type, "Network unavailable");
             pendingNetworkError = (e, stackTrace);
@@ -166,6 +193,11 @@ class GitManager {
               final retryMsg = retryError is AnyhowException ? retryError.message : retryError.toString();
               if (isNetworkStallError(retryMsg)) {
                 Logger.gmLog(type: type, "Network stall on retry");
+                pendingNetworkError = (retryError, retryStackTrace);
+                return null;
+              }
+              if (isDnsErrorOnKnownHost(retryMsg)) {
+                Logger.gmLog(type: type, "Network unavailable on retry");
                 pendingNetworkError = (retryError, retryStackTrace);
                 return null;
               }
@@ -216,6 +248,7 @@ class GitManager {
       } catch (e, stackTrace) {
         final msg = e is AnyhowException ? e.message : e.toString();
         if (isNetworkStallError(msg)) rethrow;
+        if (isDnsErrorOnKnownHost(msg)) rethrow;
         if (isNetworkUnavailableError(msg) && !await hasNetworkConnection()) rethrow;
         Logger.logError(type, e, stackTrace);
         return null;
@@ -234,6 +267,7 @@ class GitManager {
         if (e is OperationNotExecuted) rethrow;
         final msg = e is AnyhowException ? e.message : e.toString();
         if (isNetworkStallError(msg)) rethrow;
+        if (isDnsErrorOnKnownHost(msg)) rethrow;
         if (isNetworkUnavailableError(msg) && !await hasNetworkConnection()) rethrow;
         Logger.logError(type, e, stackTrace);
         return null;
@@ -431,7 +465,7 @@ class GitManager {
         );
       } catch (e, stackTrace) {
         final msg = e is AnyhowException ? e.message : e.toString();
-        if (isNetworkStallError(msg) || isNetworkUnavailableError(msg)) rethrow;
+        if (isNetworkStallError(msg) || isDnsErrorOnKnownHost(msg) || isNetworkUnavailableError(msg)) rethrow;
         Logger.logError(LogType.RecommendedAction, e, stackTrace, causeError: false);
         return null;
       }
@@ -620,6 +654,8 @@ class GitManager {
     if (_indexCorruptionPatterns.any((p) => errorStr.contains(p))) {
       final indexFile = File('$dirPath/$gitIndexPath');
       if (await indexFile.exists()) await indexFile.delete();
+      final lockFile = File('$dirPath/$gitLockPath');
+      if (await lockFile.exists()) await lockFile.delete();
       try {
         await GitManagerRs.recreateDeletedIndex(pathString: dirPath);
       } catch (e, stackTrace) {
@@ -698,6 +734,33 @@ class GitManager {
     return result ?? <GitManagerRs.Commit>[];
   }
 
+  static Future<Map<String, (int, int)>> getCommitDiffStats(List<String> references, {int priority = 1, int? repoIndex}) async {
+    if (references.isEmpty) return {};
+    final result = await _runWithLock(
+      priority: priority,
+      GitManagerRs.stringListRunWithLock,
+      await _resolveRepoIndex(repoIndex),
+      LogType.CommitDiffStats,
+      (dirPath) async {
+        try {
+          return await GitManagerRs.getCommitDiffStats(pathString: dirPath, references: references, log: _logWrapper);
+        } catch (e, stackTrace) {
+          Logger.logError(LogType.CommitDiffStats, e, stackTrace);
+          return <String>[];
+        }
+      },
+    );
+    final stats = <String, (int, int)>{};
+    for (final entry in result ?? const <String>[]) {
+      final parts = entry.split("|");
+      if (parts.length != 3) continue;
+      final additions = int.tryParse(parts[1]) ?? 0;
+      final deletions = int.tryParse(parts[2]) ?? 0;
+      stats[parts[0]] = (additions, deletions);
+    }
+    return stats;
+  }
+
   static Future<List<(String, GitManagerRs.ConflictType)>> getInitialConflicting() async {
     return (await uiSettingsManager.getStringList(StorageKey.setman_conflicting)).map((item) {
       final parts = item.split(conflictSeparator);
@@ -730,7 +793,7 @@ class GitManager {
     }
 
     final result =
-        await _runWithLock(priority: 2, GitManagerRs.stringIntListRunWithLock, await _resolveRepoIndex(repomanRepoindex), LogType.UncommittedFiles, (
+        await _runWithLock(priority: 4, GitManagerRs.stringIntListRunWithLock, await _resolveRepoIndex(repomanRepoindex), LogType.UncommittedFiles, (
           dirPath,
         ) async {
           return (await GitManagerRs.getUncommittedFilePaths(pathString: dirPath, log: _logWrapper)).toSet().toList();
@@ -751,7 +814,7 @@ class GitManager {
     }
 
     final result =
-        await _runWithLock(priority: 2, GitManagerRs.stringIntListRunWithLock, await _resolveRepoIndex(repoIndex), LogType.StagedFiles, (
+        await _runWithLock(priority: 4, GitManagerRs.stringIntListRunWithLock, await _resolveRepoIndex(repoIndex), LogType.StagedFiles, (
           dirPath,
         ) async {
           return (await GitManagerRs.getStagedFilePaths(pathString: dirPath, log: _logWrapper)).toSet().toList();
@@ -811,7 +874,7 @@ class GitManager {
     });
   }
 
-  static Future<List<String>> listRemotes([int? repomanRepoindex, int priority = 1]) async {
+  static Future<List<String>> listRemotes([int? repomanRepoindex, int priority = 4]) async {
     return await _runWithLock(
           priority: priority,
           GitManagerRs.stringListRunWithLock,
@@ -1202,6 +1265,10 @@ class GitManager {
       if (await file.exists()) {
         await file.delete();
       }
+      final lockFile = File("$dirPath/$gitLockPath");
+      if (await lockFile.exists()) {
+        await lockFile.delete();
+      }
     });
   }
 
@@ -1209,6 +1276,8 @@ class GitManager {
     return await _runWithLock(GitManagerRs.voidRunWithLock, await _resolveRepoIndex(repoIndex), LogType.RecreateGitIndex, (dirPath) async {
       final file = File("$dirPath/$gitIndexPath");
       if (await file.exists()) await file.delete();
+      final lockFile = File("$dirPath/$gitLockPath");
+      if (await lockFile.exists()) await lockFile.delete();
       await GitManagerRs.recreateDeletedIndex(pathString: dirPath);
     });
   }

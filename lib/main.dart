@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
-
 import 'package:GitSync/api/manager/auth/github_app_manager.dart';
 import 'package:GitSync/api/manager/settings_manager.dart';
 import 'package:GitSync/ui/component/button_setting.dart';
@@ -120,9 +119,34 @@ Future<void> main() async {
       });
       initLogger("${(await getTemporaryDirectory()).path}/logs", maxFileCount: 50, maxFileLength: 1 * 1024 * 1024);
       await uiSettingsManager.reinit();
-      // Loads premiumManager initial state
       initAsync(() async => await premiumManager.init());
-      runApp(const ProviderScope(child: MyApp()));
+      final container = ProviderContainer();
+
+      await container.read(branchNameProvider.future);
+      await container.read(remoteUrlLinkProvider.future);
+      await container.read(listRemotesProvider.future);
+      await container.read(branchNamesProvider.future);
+      await container.read(recentCommitsProvider.future);
+      await container.read(recommendedActionProvider.future);
+      await container.read(remoteNameProvider.future);
+      await container.read(syncMessageEnabledProvider.future);
+      await container.read(lastSyncMethodProvider.future);
+      await container.read(clientModeEnabledProvider.future);
+      await container.read(gitProviderProvider.future);
+      await container.read(postFooterProvider.future);
+      await container.read(authorNameProvider.future);
+      await container.read(authorEmailProvider.future);
+      await container.read(syncMessageProvider.future);
+      await container.read(githubScopedOauthProvider.future);
+      await container.read(isAuthenticatedProvider.future);
+      await container.read(repoNamesProvider.future);
+      await container.read(repoIndexProvider.future);
+      await container.read(gitDirPathProvider.future);
+      await container.read(pinnedShowcaseFeaturesProvider.future);
+      await container.read(aiFeaturesEnabledProvider.future);
+      await container.read(showEditorExperimentalNoticeProvider.future);
+
+      runApp(ProviderScope(parent: container, child: const MyApp()));
     },
     (error, stackTrace) {
       e(LogType.Global.name, error, stackTrace);
@@ -158,7 +182,7 @@ Future<void> backgroundCallback(Uri? data) async {
       if (Platform.isIOS) {
         await gitSyncService.debouncedSync(repoIndex, true, true);
       } else {
-        FlutterBackgroundService().invoke(GitsyncService.FORCE_SYNC, {REPO_INDEX: "$repoIndex"});
+        await gitSyncService.debouncedSync(repoIndex, true, true, null);
       }
       return;
     }
@@ -169,13 +193,24 @@ Future<void> backgroundCallback(Uri? data) async {
       return;
     }
 
+    if (scheme == 'gitsync' && data?.host == 'tile-sync') {
+      final repoIndex = await _resolveRepoIndex(data, StorageKey.repoman_tileSyncIndex);
+
+      if (Platform.isIOS) {
+        await gitSyncService.debouncedSync(repoIndex, true, true);
+      } else {
+        await gitSyncService.debouncedSync(repoIndex, true, true, null);
+      }
+      return;
+    }
+
     if (scheme == 'gitsync' && data?.host == 'sync-now') {
       final repoIndex = await _resolveRepoIndex(data, StorageKey.repoman_shortcutSyncIndex);
 
       if (Platform.isIOS) {
         await gitSyncService.debouncedSync(repoIndex, true, true);
       } else {
-        FlutterBackgroundService().invoke(GitsyncService.FORCE_SYNC, {REPO_INDEX: "$repoIndex"});
+        await gitSyncService.debouncedSync(repoIndex, true, true, null);
       }
       return;
     }
@@ -424,6 +459,13 @@ void onServiceStart(ServiceInstance service) async {
   _onGitOp(service, LogType.RecentCommits, (event) async {
     final result = await GitManager.getRecentCommits();
     return {"result": result.map((item) => utf8.fuse(base64).encode(jsonEncode(item.toJson()))).toList()};
+  });
+
+  _onGitOp(service, LogType.CommitDiffStats, (event) async {
+    final result = await GitManager.getCommitDiffStats(event?["references"]?.cast<String>() ?? const []);
+    return {
+      "result": result.entries.map((entry) => [entry.key, entry.value.$1, entry.value.$2]).toList(),
+    };
   });
 
   _onGitOp(service, LogType.ConflictingFiles, (event) async {
@@ -806,8 +848,8 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
   bool demoConflicting = false;
 
   bool devTools = false;
-  final ValueNotifier<int> _tabIndex = ValueNotifier(1); // Default to Home tab
-  final PageController _pageController = PageController(initialPage: 1);
+  late final ValueNotifier<int> _tabIndex;
+  late final PageController _pageController;
   final GlobalKey<NavigatorState> _homeNavigatorKey = GlobalKey<NavigatorState>();
   final ValueNotifier<bool> _homeCanPop = ValueNotifier(false);
   late final _NestedNavigatorObserver _homeNavigatorObserver = _NestedNavigatorObserver(_homeCanPop);
@@ -976,14 +1018,14 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
     await colours.reloadTheme(context);
     if (token != _reloadToken) return;
     if (mounted) setState(() {});
-    ref.invalidate(branchNameProvider);
-    ref.invalidate(remoteUrlLinkProvider);
-    ref.invalidate(listRemotesProvider);
-    ref.invalidate(branchNamesProvider);
-    ref.invalidate(hasGitFiltersProvider);
-    ref.invalidate(conflictingFilesProvider);
-    ref.invalidate(recentCommitsProvider);
-    ref.invalidate(recommendedActionProvider);
+    ref.read(branchNameProvider.notifier).refresh();
+    ref.read(remoteUrlLinkProvider.notifier).refresh();
+    ref.read(listRemotesProvider.notifier).refresh();
+    ref.read(branchNamesProvider.notifier).refresh();
+    ref.read(conflictingFilesProvider.notifier).refresh();
+    await ref.read(recentCommitsProvider.notifier).refresh();
+    await ref.read(recommendedActionProvider.notifier).refresh();
+    await ref.read(recentCommitsProvider.notifier).loadDiffStats();
     ref.invalidate(syncMessageEnabledProvider);
     ref.invalidate(lastSyncMethodProvider);
     ref.invalidate(clientModeEnabledProvider);
@@ -999,7 +1041,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
     ref.invalidate(featureCountsProvider);
     ref.invalidate(gitDirPathProvider);
     ref.invalidate(remoteNameProvider);
-    ref.invalidate(submodulePathsProvider);
+    ref.read(submodulePathsProvider.notifier).refresh();
     if (token != _reloadToken) return;
     if (mounted) setState(() {});
   }
@@ -1063,6 +1105,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
 
   @override
   void initState() {
+    final aiEnabled = ref.read(aiFeaturesEnabledProvider).valueOrNull ?? true;
+    final homeIndex = aiEnabled ? 1 : 0;
+    _tabIndex = ValueNotifier(homeIndex);
+    _pageController = PageController(initialPage: homeIndex);
     AccessibilityServiceHelper.init(context, (fn) => mounted ? setState(fn) : null);
     WidgetsBinding.instance.addObserver(this);
 
@@ -1914,7 +1960,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                   style: ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                   constraints: BoxConstraints(),
                   onPressed: () => _restorableGlobalSettings.present({}),
-                  icon: FaIcon(FontAwesomeIcons.gear, color: colours.tertiaryDark, size: spaceMD + 7),
+                  icon: FaIcon(FontAwesomeIcons.gear, color: colours.tertiaryDark, size: spaceMD + 7, semanticLabel: t.globalSettings),
                 ),
               ),
               SizedBox(width: spaceSM),
@@ -2165,6 +2211,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                   if (page == homeIndex) reloadAll();
                   final filesIndex = aiEnabled ? 2 : 1;
                   if (page == filesIndex) {
+                    _fileExplorerKey.currentState?.reload();
                     _fileExplorerKey.currentState?.reloadOpenFile();
                   }
                 },
@@ -2189,14 +2236,20 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                   _KeepAlivePage(
                     child: ValueListenableBuilder(
                       valueListenable: _homeCanPop,
-                      builder: (context, canPop, child) => PopScope(
-                        canPop: !canPop,
-                        onPopInvokedWithResult: (didPop, _) {
-                          if (!didPop && (_homeNavigatorKey.currentState?.canPop() ?? false)) {
-                            _homeNavigatorKey.currentState!.pop();
-                          }
-                        },
-                        child: child!,
+                      builder: (context, canPop, child) => ValueListenableBuilder<bool>(
+                        valueListenable: _commitSelectMode,
+                        builder: (context, inCommitSelectMode, _) => PopScope(
+                          canPop: !canPop && !inCommitSelectMode,
+                          onPopInvokedWithResult: (didPop, _) {
+                            if (didPop) return;
+                            if (_homeNavigatorKey.currentState?.canPop() ?? false) {
+                              _homeNavigatorKey.currentState!.pop();
+                            } else if (_commitSelectMode.value) {
+                              _exitCommitSelectMode();
+                            }
+                          },
+                          child: child!,
+                        ),
                       ),
                       child: Navigator(
                         key: _homeNavigatorKey,
@@ -2343,6 +2396,8 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                                                                   children: [
                                                                     Hero(
                                                                       tag: hero_commits_list,
+                                                                      placeholderBuilder: (context, size, child) =>
+                                                                          SizedBox(width: size.width, height: size.height),
                                                                       child: SizedBox(
                                                                         height: orientation == Orientation.portrait ? 220 : double.infinity,
                                                                         child: AnimatedBuilder(
@@ -2725,12 +2780,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                                                                       final webUrl = ref.watch(remoteUrlLinkProvider).valueOrNull?.$2;
                                                                       final authenticated = ref.watch(isAuthenticatedProvider).valueOrNull ?? false;
                                                                       final gitDirPath = ref.watch(gitDirPathProvider).valueOrNull;
-                                                                      return FutureBuilder<List<String>>(
-                                                                        future: uiSettingsManager.getStringList(
-                                                                          StorageKey.setman_pinnedShowcaseFeatures,
-                                                                        ),
-                                                                        builder: (context, snapshot) {
-                                                                          final data = snapshot.data;
+                                                                      return ProviderBuilder<List<String>>(
+                                                                        provider: pinnedShowcaseFeaturesProvider,
+                                                                        builder: (context, async) {
+                                                                          final data = async.valueOrNull;
                                                                           if (data == null) return SizedBox(width: double.infinity, height: 0);
                                                                           if (!gitProviderValue.isOAuthProvider ||
                                                                               !authenticated ||
@@ -2907,21 +2960,20 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                                                                                           icon: Stack(
                                                                                             clipBehavior: Clip.none,
                                                                                             children: [
-                                                                                              if (clientModeEnabledValue == true)
-                                                                                                Positioned(
-                                                                                                  top: -spaceXXS,
-                                                                                                  bottom: -spaceXXS,
-                                                                                                  left: -spaceXXS,
-                                                                                                  right: -spaceXXS,
-                                                                                                  child: ProviderBuilder<int?>(
-                                                                                                    provider: recommendedActionProvider,
-                                                                                                    builder: (context, value) => value.isLoading
-                                                                                                        ? CircularProgressIndicator(
-                                                                                                            color: colours.tertiaryDark,
-                                                                                                          )
-                                                                                                        : SizedBox.shrink(),
-                                                                                                  ),
+                                                                                              Positioned(
+                                                                                                top: -spaceXXS,
+                                                                                                bottom: -spaceXXS,
+                                                                                                left: -spaceXXS,
+                                                                                                right: -spaceXXS,
+                                                                                                child: ProviderBuilder<int?>(
+                                                                                                  provider: recommendedActionProvider,
+                                                                                                  builder: (context, value) => value.isLoading
+                                                                                                      ? CircularProgressIndicator(
+                                                                                                          color: colours.tertiaryDark,
+                                                                                                        )
+                                                                                                      : SizedBox.shrink(),
                                                                                                 ),
+                                                                                              ),
                                                                                               SizedBox(
                                                                                                 height: textLG,
                                                                                                 width: textLG,
@@ -3317,10 +3369,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                                                                         final remoteUrlLinkValue = remoteUrlLinkAsync.valueOrNull;
                                                                         final remotesList = remotesAsync.valueOrNull ?? [];
                                                                         final actions = remoteEllipsisActions(remotesList.length);
-                                                                        return FutureBuilder<String>(
-                                                                          future: uiSettingsManager.getRemote(),
-                                                                          builder: (context, currentRemoteSnapshot) {
-                                                                            final currentRemoteName = currentRemoteSnapshot.data;
+                                                                        return ProviderBuilder<String>(
+                                                                          provider: remoteNameProvider,
+                                                                          builder: (context, currentRemoteNameAsync) {
+                                                                            final currentRemoteName = currentRemoteNameAsync.valueOrNull;
                                                                             final hasDir = gitDirPath?.$1 != null;
                                                                             final noRemoteWithDir = remotesList.isEmpty && hasDir;
                                                                             // Build dropdown items: "Add Remote" first, then each remote name
@@ -4053,6 +4105,72 @@ class _MyHomePageState extends ConsumerState<MyHomePage> with WidgetsBindingObse
                                                         );
                                                       },
                                                     ),
+                                                  ),
+
+                                                  Builder(
+                                                    builder: (context) {
+                                                      final urlSnap = ref.watch(remoteUrlLinkProvider).valueOrNull;
+                                                      final providerSnap = ref.watch(gitProviderProvider).valueOrNull;
+                                                      final mismatch = remoteAuthMismatch(urlSnap?.$1, providerSnap);
+                                                      if (mismatch == null) return const SizedBox.shrink();
+                                                      final subtitle = mismatch == 'httpsWithSshAuth'
+                                                          ? t.remoteAuthMismatchUsesHttps
+                                                          : t.remoteAuthMismatchUsesSsh;
+                                                      return Padding(
+                                                        padding: EdgeInsets.only(top: spaceSM),
+                                                        child: Material(
+                                                          color: Colors.transparent,
+                                                          child: InkWell(
+                                                            onTap: () async => await showAuthDialog(),
+                                                            borderRadius: BorderRadius.all(cornerRadiusMD),
+                                                            child: Container(
+                                                              decoration: BoxDecoration(
+                                                                color: colours.secondaryDark,
+                                                                border: Border.all(color: colours.tertiaryWarning, width: 1.5),
+                                                                borderRadius: BorderRadius.all(cornerRadiusMD),
+                                                              ),
+                                                              padding: EdgeInsets.symmetric(horizontal: spaceMD, vertical: spaceSM),
+                                                              child: Row(
+                                                                crossAxisAlignment: CrossAxisAlignment.center,
+                                                                children: [
+                                                                  FaIcon(
+                                                                    FontAwesomeIcons.triangleExclamation,
+                                                                    color: colours.tertiaryWarning,
+                                                                    size: textLG,
+                                                                  ),
+                                                                  SizedBox(width: spaceMD),
+                                                                  Expanded(
+                                                                    child: Column(
+                                                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                                                      mainAxisSize: MainAxisSize.min,
+                                                                      children: [
+                                                                        Text(
+                                                                          t.remoteAuthMismatchTitle.toUpperCase(),
+                                                                          style: TextStyle(
+                                                                            color: colours.tertiaryWarning,
+                                                                            fontSize: textSM,
+                                                                            fontWeight: FontWeight.bold,
+                                                                          ),
+                                                                        ),
+                                                                        SizedBox(height: spaceXXXS),
+                                                                        Text(
+                                                                          subtitle,
+                                                                          style: TextStyle(
+                                                                            color: colours.secondaryLight,
+                                                                            fontSize: textXS,
+                                                                            fontWeight: FontWeight.w500,
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      );
+                                                    },
                                                   ),
 
                                                   SizedBox(height: spaceLG),

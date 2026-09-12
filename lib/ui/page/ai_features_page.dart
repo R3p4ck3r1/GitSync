@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +10,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 import 'package:GitSync/api/ai_provider_validator.dart';
 import 'package:GitSync/api/ai_tools.dart';
+import 'package:GitSync/api/ai_tools_file.dart';
 import 'package:GitSync/api/manager/storage.dart';
 import 'package:GitSync/global.dart';
 import 'package:GitSync/constant/dimens.dart';
@@ -16,8 +18,11 @@ import 'package:GitSync/providers/riverpod_providers.dart';
 import 'package:GitSync/type/ai_chat.dart';
 import 'package:GitSync/ui/component/markdown_config.dart';
 import 'package:GitSync/ui/dialog/base_alert_dialog.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const _mono = TextStyle(fontFamily: "monospace", height: 1.6);
+
+final _urlRegex = RegExp(r'(?:https?://|www\.)[^\s<>"]+', caseSensitive: false);
 
 class AiFeaturesPage extends ConsumerStatefulWidget {
   const AiFeaturesPage({super.key});
@@ -107,9 +112,12 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
       child: Column(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                ValueListenableBuilder<List<ChatMessage>>(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => _focusNode.unfocus(),
+              child: Stack(
+                children: [
+                  ValueListenableBuilder<List<ChatMessage>>(
                   valueListenable: aiChatService.messages,
                   builder: (context, messages, _) {
                     return ValueListenableBuilder<String>(
@@ -200,6 +208,7 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
               ],
             ),
           ),
+          ),
 
           ValueListenableBuilder<String?>(
             valueListenable: aiChatService.error,
@@ -227,8 +236,13 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
                       ),
                     ),
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => aiChatService.error.value = null,
-                      child: FaIcon(FontAwesomeIcons.xmark, color: colours.primaryNegative, size: textSM),
+                      child: Container(
+                        constraints: BoxConstraints(minWidth: spaceXL, minHeight: spaceXL),
+                        alignment: Alignment.center,
+                        child: FaIcon(FontAwesomeIcons.xmark, color: colours.primaryNegative, size: textMD),
+                      ),
                     ),
                   ],
                 ),
@@ -365,7 +379,7 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
               await Clipboard.setData(ClipboardData(text: text));
               Fluttertoast.showToast(msg: "Copied to clipboard", toastLength: Toast.LENGTH_SHORT);
             },
-            child: Text(
+            child: _LinkifiedText(
               text,
               style: _mono.merge(TextStyle(color: colours.primaryLight, fontSize: textMD, fontWeight: FontWeight.bold)),
             ),
@@ -502,22 +516,23 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
   }
 
   String _summarizeToolInput(String toolName, Map<String, dynamic> input) {
-    if (input.containsKey('paths')) return (input['paths'] as List).join(', ');
-    if (input.containsKey('path')) return input['path'] as String;
-    if (input.containsKey('file_path')) return input['file_path'] as String;
-    if (input.containsKey('name')) return input['name'] as String;
-    if (input.containsKey('commit_sha')) return input['commit_sha'] as String;
-    if (input.containsKey('message')) {
+    if (input['paths'] is List) return (input['paths'] as List).join(', ');
+    if (input['path'] is String) return input['path'] as String;
+    if (input['file_path'] is String) return input['file_path'] as String;
+    if (input['name'] is String) return input['name'] as String;
+    if (input['commit_sha'] is String) return input['commit_sha'] as String;
+    if (input['message'] is String) {
       final msg = input['message'] as String;
       return msg.length > 50 ? '${msg.substring(0, 50)}...' : msg;
     }
-    if (input.containsKey('pattern')) return input['pattern'] as String;
+    if (input['pattern'] is String) return input['pattern'] as String;
     return '';
   }
 
   Widget _confirmationChip(AiTool tool) {
     final isDanger = tool.confirmation == ToolConfirmation.danger;
     final isConfirm = tool.confirmation == ToolConfirmation.confirm || isDanger;
+    final isEdit = editToolNames.contains(tool.name);
     final borderColor = isConfirm ? colours.primaryNegative : colours.primaryWarning;
 
     if (isDanger) return _dangerConfirmationChip(tool);
@@ -581,6 +596,25 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
                 ),
               ),
             ],
+          ),
+          SizedBox(height: spaceXS),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: () {
+                aiChatService.allowToolsForSession(isEdit ? editToolNames : [tool.name]);
+                _confirmationCompleter?.complete(true);
+              },
+              style: ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(colours.tertiaryDark),
+                shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.all(cornerRadiusSM))),
+                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: spaceXS)),
+              ),
+              child: Text(
+                isEdit ? t.aiAllowAllEdits : t.aiAlwaysAllowSession,
+                style: TextStyle(color: colours.secondaryLight, fontSize: textSM, fontWeight: FontWeight.bold),
+              ),
+            ),
           ),
         ],
       ),
@@ -872,6 +906,7 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
                             ref.read(aiKeyConfiguredProvider.notifier).state = false;
                             aiChatService.clearConversation();
                             Navigator.pop(context, true);
+                            _checkStoredApiKey();
                           },
                           style: ButtonStyle(
                             backgroundColor: WidgetStatePropertyAll(colours.tertiaryDark),
@@ -933,7 +968,7 @@ class _AiFeaturesPageState extends ConsumerState<AiFeaturesPage> {
               ),
               SizedBox(height: spaceXS),
               Text(
-                "This will cancel the current response. Any partial output will be kept.",
+                t.aiStopGeneratingMsg,
                 style: TextStyle(color: colours.secondaryLight, fontSize: textSM),
                 textAlign: TextAlign.center,
               ),
@@ -1869,5 +1904,66 @@ class _UninitializedPageState extends ConsumerState<_UninitializedPage> {
         ),
       ],
     );
+  }
+}
+
+void _openLink(String url) {
+  final uri = Uri.tryParse(url.startsWith(RegExp(r'[a-z][a-z0-9+.-]*:', caseSensitive: false)) ? url : 'https://$url');
+  if (uri == null) return;
+  launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+class _LinkifiedText extends StatefulWidget {
+  const _LinkifiedText(this.text, {required this.style});
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  State<_LinkifiedText> createState() => _LinkifiedTextState();
+}
+
+class _LinkifiedTextState extends State<_LinkifiedText> {
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  void _clearRecognizers() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _clearRecognizers();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _clearRecognizers();
+
+    final linkStyle = widget.style.merge(TextStyle(color: colours.tertiaryInfo, decoration: TextDecoration.underline));
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+
+    for (final match in _urlRegex.allMatches(widget.text)) {
+      var url = match.group(0)!;
+      while (url.isNotEmpty && '.,;:!?\')]}'.contains(url[url.length - 1])) {
+        url = url.substring(0, url.length - 1);
+      }
+      if (url.isEmpty) continue;
+
+      if (match.start > cursor) spans.add(TextSpan(text: widget.text.substring(cursor, match.start)));
+
+      final recognizer = TapGestureRecognizer()..onTap = () => _openLink(url);
+      _recognizers.add(recognizer);
+      spans.add(TextSpan(text: url, style: linkStyle, recognizer: recognizer));
+      cursor = match.start + url.length;
+    }
+
+    if (cursor < widget.text.length) spans.add(TextSpan(text: widget.text.substring(cursor)));
+
+    return Text.rich(TextSpan(children: spans), style: widget.style);
   }
 }

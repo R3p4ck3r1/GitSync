@@ -10,6 +10,7 @@ import 'package:GitSync/global.dart';
 import 'package:GitSync/type/git_provider.dart';
 import 'package:GitSync/type/issue.dart';
 import 'package:GitSync/ui/page/issue_detail_page.dart';
+import 'package:GitSync/ui/page/pr_detail_page.dart';
 import 'package:GitSync/ui/page/create_issue_page.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
@@ -359,6 +360,55 @@ class _IssuesPageState extends State<IssuesPage> {
     );
   }
 
+  void _openPr(int number) {
+    Navigator.of(context).push(
+      createPrDetailPageRoute(
+        gitProvider: widget.gitProvider,
+        remoteWebUrl: widget.remoteWebUrl,
+        accessToken: widget.accessToken,
+        githubAppOauth: widget.githubAppOauth,
+        prNumber: number,
+        prTitle: '#$number',
+      ),
+    );
+  }
+
+  void _openLinkedPrs(List<int> numbers) {
+    if (numbers.isEmpty) return;
+    if (numbers.length == 1) {
+      _openPr(numbers.first);
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colours.secondaryDark,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: cornerRadiusMD)),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: EdgeInsets.all(spaceMD),
+                child: Text(
+                  t.pullRequests.toUpperCase(),
+                  style: TextStyle(color: colours.primaryLight, fontWeight: FontWeight.bold, fontSize: textMD),
+                ),
+              ),
+              ...numbers.map(
+                (number) => _buildSheetOption('#$number', false, () {
+                  Navigator.pop(context);
+                  _openPr(number);
+                }),
+              ),
+              SizedBox(height: spaceSM),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildAutocompleteField(
     TextEditingController controller,
     FocusNode focusNode,
@@ -552,6 +602,7 @@ class _IssuesPageState extends State<IssuesPage> {
                     style: TextStyle(color: colours.primaryLight, fontSize: textXL, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
+                  getOpenInBrowserButton(widget.gitProvider.issuesUrl(widget.remoteWebUrl)),
                   GestureDetector(
                     onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
                     child: Container(
@@ -713,6 +764,7 @@ class _IssuesPageState extends State<IssuesPage> {
                             padding: EdgeInsets.only(bottom: spaceXS),
                             child: _ItemIssue(
                               issue: _issues[index],
+                              onOpenLinkedPrs: _openLinkedPrs,
                               onTap: () async {
                                 final result = await Navigator.of(context).push(
                                   createIssueDetailPageRoute(
@@ -735,7 +787,7 @@ class _IssuesPageState extends State<IssuesPage> {
                                       authorUsername: old.authorUsername,
                                       createdAt: old.createdAt,
                                       commentCount: old.commentCount,
-                                      linkedPrCount: old.linkedPrCount,
+                                      linkedPrNumbers: old.linkedPrNumbers,
                                       labels: old.labels,
                                     );
                                   });
@@ -787,8 +839,9 @@ class _FilterChip extends StatelessWidget {
 class _ItemIssue extends StatelessWidget {
   final Issue issue;
   final VoidCallback? onTap;
+  final void Function(List<int>)? onOpenLinkedPrs;
 
-  const _ItemIssue({required this.issue, this.onTap});
+  const _ItemIssue({required this.issue, this.onTap, this.onOpenLinkedPrs});
 
   @override
   Widget build(BuildContext context) {
@@ -860,11 +913,23 @@ class _ItemIssue extends StatelessWidget {
                       ' $bullet ',
                       style: TextStyle(color: colours.tertiaryLight, fontSize: textXS),
                     ),
-                    FaIcon(FontAwesomeIcons.codePullRequest, size: textXS, color: colours.tertiaryLight),
-                    SizedBox(width: spaceXXXXS),
-                    Text(
-                      '${issue.linkedPrCount}',
-                      style: TextStyle(color: colours.tertiaryLight, fontSize: textXS),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onOpenLinkedPrs?.call(issue.linkedPrNumbers),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: spaceXXS, vertical: spaceXS),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            FaIcon(FontAwesomeIcons.codePullRequest, size: textXS, color: colours.tertiaryInfo),
+                            SizedBox(width: spaceXXXXS),
+                            Text(
+                              '${issue.linkedPrCount}',
+                              style: TextStyle(color: colours.tertiaryInfo, fontSize: textXS),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                   if (issue.commentCount > 0) ...[

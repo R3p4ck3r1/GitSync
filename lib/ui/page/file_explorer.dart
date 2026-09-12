@@ -18,6 +18,7 @@ import 'package:file_manager/file_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../constant/strings.dart';
 import 'package:path/path.dart' as p;
 
@@ -64,6 +65,12 @@ class FileExplorerState extends State<FileExplorer> with WidgetsBindingObserver 
     controller: controller,
     hideHiddenEntity: false,
     loadingScreen: Center(child: CircularProgressIndicator(color: colours.primaryLight)),
+    emptyFolder: Center(
+      child: Text(
+        t.filesNotFound.toUpperCase(),
+        style: TextStyle(color: colours.secondaryLight, fontWeight: FontWeight.bold, fontSize: textLG),
+      ),
+    ),
     builder: (context, snapshot) {
       final List<FileSystemEntity> entities = snapshot;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -234,6 +241,36 @@ class FileExplorerState extends State<FileExplorer> with WidgetsBindingObserver 
           loadingMoreNotifier.value = false;
         },
       ),
+    if (Platform.isIOS && FileSystemEntity.typeSync(selectedPathsNotifier.value[0]) == FileSystemEntityType.file)
+      (
+        (t.openInTextastic, t.openInTextasticDescription),
+        (List<String> selectedPaths) async {
+          final filePath = selectedPathsNotifier.value[0];
+          final encodedFullPath = Uri.encodeComponent(filePath);
+          final textasticUrl = 'textastic://x-callback-url/open?location=fullPath&path=$encodedFullPath';
+
+          selectedPathsNotifier.value = [];
+
+          try {
+            final uri = Uri.parse(textasticUrl);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri);
+            } else {
+              Fluttertoast.showToast(
+                msg: "Textastic app not installed",
+                toastLength: Toast.LENGTH_LONG,
+                gravity: null,
+              );
+            }
+          } catch (e) {
+            Fluttertoast.showToast(
+              msg: "Failed to open in Textastic: $e",
+              toastLength: Toast.LENGTH_LONG,
+              gravity: null,
+            );
+          }
+        },
+      ),
     (
       (t.viewGitLog, t.viewGitLogDescription),
       (List<String> selectedPaths) async {
@@ -339,9 +376,14 @@ class FileExplorerState extends State<FileExplorer> with WidgetsBindingObserver 
   }
 
   void reload() {
-    final normalised = controller.getCurrentPath.replaceFirst(RegExp(r'/$'), '');
-    controller.setCurrentPath = normalised;
+    final root = widget.path.replaceFirst(RegExp(r'/$'), '');
+    var normalised = controller.getCurrentPath.replaceFirst(RegExp(r'/$'), '');
+    if (!normalised.startsWith(root)) normalised = root;
+    while (normalised.length > root.length && !Directory(normalised).existsSync()) {
+      normalised = p.dirname(normalised);
+    }
     controller.setCurrentPath = "$normalised/";
+    controller.setCurrentPath = normalised;
   }
 
   @override
@@ -684,7 +726,7 @@ class FileExplorerState extends State<FileExplorer> with WidgetsBindingObserver 
 
                                                   try {
                                                     if (entity == FileSystemEntityType.directory) {
-                                                      await Directory(path).delete();
+                                                      await Directory(path).delete(recursive: true);
                                                     } else {
                                                       await File(path).delete();
                                                     }

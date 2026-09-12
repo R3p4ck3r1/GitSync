@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:GitSync/api/accessibility_service_helper.dart';
 import 'package:GitSync/api/helper.dart';
+import 'package:GitSync/api/issue_duplicate_finder.dart';
 import 'package:GitSync/api/manager/auth/github_manager.dart';
 import 'package:GitSync/api/manager/settings_manager.dart';
 import 'package:GitSync/main.dart';
@@ -11,6 +12,7 @@ import 'package:GitSync/type/git_provider.dart';
 import 'package:GitSync/ui/dialog/github_issue_oauth.dart' as GithubIssueOauthDialog;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:GitSync/constant/strings.dart';
@@ -23,6 +25,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:GitSync/ui/dialog/error_occurred.dart' as ErrorOccurredDialog;
 
 import '../ui/dialog/github_issue_report.dart' as GithubIssueReportDialog;
+import '../ui/dialog/issue_duplicate_found.dart' as IssueDuplicateFoundDialog;
 import '../ui/dialog/issue_reported_successfully.dart' as IssueReportedSuccessfullyDialog;
 
 // Also add to rust/src/api/git_manager.rs:21
@@ -55,6 +58,7 @@ enum LogType {
   CommitDiff,
   FileDiff,
   RecentCommits,
+  CommitDiffStats,
   ConflictingFiles,
   UncommittedFiles,
   StagedFiles,
@@ -219,10 +223,18 @@ class Logger {
     if (reportIssueToken == "" || reportIssueToken == null) return;
 
     String? initialTitle;
+    String? errorText;
     if (errorMessage != null) {
       final errorMatch = RegExp(r'Error: (.+)').firstMatch(errorMessage);
-      final extracted = errorMatch != null ? errorMatch.group(1)! : errorMessage.split('\n').first;
-      initialTitle = 'Error: `$extracted`';
+      errorText = errorMatch != null ? errorMatch.group(1)! : errorMessage.split('\n').first;
+      initialTitle = 'Error: `$errorText`';
+    }
+
+    final duplicate = errorText == null ? null : await findDuplicateIssue(reportIssueToken!, errorText);
+    if (duplicate != null) {
+      if (!context.mounted) return;
+      if (!await IssueDuplicateFoundDialog.showDialog(context, duplicate)) return;
+      if (!context.mounted) return;
     }
 
     final deviceInfoEntries = await generateDeviceInfoEntries();
@@ -263,24 +275,58 @@ $logs
 </details>
 ''';
 
-      final response = await http.post(
-        url,
-        headers: {'Authorization': 'token $reportIssueToken', 'Accept': 'application/vnd.github+json'},
-        body: jsonEncode({
-          'title': issueTitle,
-          'body': issueBody,
-          'labels': ['bug'],
-        }),
-      );
+      if (duplicate != null) {
+        final commentUrl = await postIssueComment(reportIssueToken!, duplicate.number, issueBody);
 
-      if (response.statusCode == 201) {
-        print('Issue created successfully: ${response.statusCode} ${response.body}');
-      } else {
-        await repoManager.setStringNullable(StorageKey.repoman_reportIssueToken, null);
-        print('Failed to create issue: ${response.statusCode} ${response.body}');
+        if (commentUrl == null) {
+          Fluttertoast.showToast(msg: t.issueCommentFailedMsg, toastLength: Toast.LENGTH_LONG, gravity: null);
+          return;
+        }
+
+        print('ISSUE_COMMENTED: ${duplicate.number} $commentUrl');
+
+        if (!context.mounted) return;
+        await IssueReportedSuccessfullyDialog.showDialog(context, commentUrl, title: t.issueCommentSuccessTitle, message: t.issueCommentSuccessMsg);
+        return;
       }
 
-      IssueReportedSuccessfullyDialog.showDialog(context, jsonDecode(utf8.decode(response.bodyBytes))["html_url"]);
+      final http.Response response;
+      try {
+        response = await http.post(
+          url,
+          headers: {'Authorization': 'token $reportIssueToken', 'Accept': 'application/vnd.github+json'},
+          body: jsonEncode({
+            'title': issueTitle,
+            'body': issueBody,
+            'labels': ['bug'],
+          }),
+        );
+      } catch (e, stackTrace) {
+        Logger.logError(LogType.Global, e, stackTrace, causeError: false);
+        Fluttertoast.showToast(msg: t.issueReportFailedMsg, toastLength: Toast.LENGTH_LONG, gravity: null);
+        return;
+      }
+
+      if (response.statusCode != 201) {
+        await repoManager.setStringNullable(StorageKey.repoman_reportIssueToken, null);
+        print('Failed to create issue: ${response.statusCode} ${response.body}');
+        Fluttertoast.showToast(msg: t.issueReportFailedMsg, toastLength: Toast.LENGTH_LONG, gravity: null);
+        return;
+      }
+
+      final issueJson = jsonDecode(utf8.decode(response.bodyBytes));
+
+      final issueNumber = issueJson["number"]?.toString();
+      print('Issue created successfully: ${response.statusCode} ${response.body}');
+
+      final issueUrl = issueJson["html_url"];
+      print('ISSUE_CREATED: ${issueNumber ?? "?"} ${issueUrl ?? "?"}');
+      if (issueUrl == null) {
+        Fluttertoast.showToast(msg: t.issueReportFailedMsg, toastLength: Toast.LENGTH_LONG, gravity: null);
+        return;
+      }
+      if (!context.mounted) return;
+      IssueReportedSuccessfullyDialog.showDialog(context, issueUrl);
     });
   }
 

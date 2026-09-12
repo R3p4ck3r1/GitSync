@@ -36,29 +36,27 @@ abstract class CachedGitNotifier<T> extends AsyncNotifier<T> {
 
   @override
   Future<T> build() async {
-    final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
-    final manager = await SettingsManager.scoped(repoIndex);
-    _scopedManager = manager;
-
     var cancelled = false;
     ref.onDispose(() => cancelled = true);
 
     bool cacheValid = true;
     late T cached;
     try {
-      cached = await readCache(manager);
+      cached = await readCache(uiSettingsManager);
     } catch (e, s) {
       cacheValid = false;
       Logger.logError(LogType.Global, e, s);
     }
 
     if (cacheValid) {
-      final hasCache = cached != null
-          && (cached is! List || cached.isNotEmpty)
-          && (cached is! Map || cached.isNotEmpty);
+      final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
+      final hasCache = cached != null && (cached is! List || cached.isNotEmpty) && (cached is! Map || cached.isNotEmpty);
       if (hasCache) {
+        state = AsyncData(cached);
         () async {
           try {
+            final manager = await SettingsManager.scoped(repoIndex);
+            _scopedManager = manager;
             final live = await fetchLive();
             if (!cancelled && await _isCurrentIndex(repoIndex)) {
               state = AsyncData(live);
@@ -77,6 +75,10 @@ abstract class CachedGitNotifier<T> extends AsyncNotifier<T> {
       }
     }
 
+    final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
+    final manager = await SettingsManager.scoped(repoIndex);
+    _scopedManager = manager;
+
     final live = await fetchLive();
     if (!cancelled && await _isCurrentIndex(repoIndex)) {
       await writeCache(manager, live);
@@ -87,6 +89,26 @@ abstract class CachedGitNotifier<T> extends AsyncNotifier<T> {
   void set(T value) {
     state = AsyncData(value);
     writeCache(_scopedManager ?? uiSettingsManager, value);
+  }
+
+  Future<T?> refresh() async {
+    final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
+    final manager = await SettingsManager.scoped(repoIndex);
+    _scopedManager = manager;
+    final previous = state.valueOrNull;
+    try {
+      final live = await fetchLive();
+      if (await _isCurrentIndex(repoIndex)) {
+        state = AsyncData(live);
+        await writeCache(manager, live);
+      }
+      return live;
+    } on OperationNotExecuted {
+    } catch (e) {
+      if (await _isCurrentIndex(repoIndex) && previous != null) state = AsyncData(previous as T);
+      rethrow;
+    }
+    return null;
   }
 }
 
@@ -235,6 +257,46 @@ class RecentCommitsNotifier extends CachedGitNotifier<List<GitManagerRs.Commit>>
         <GitManagerRs.Commit>[],
   );
 
+  Future<void> loadDiffStats() async {
+    final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
+    final manager = await SettingsManager.scoped(repoIndex);
+    _scopedManager = manager;
+
+    final current = state.valueOrNull ?? [];
+    final missing = current.where((c) => c.additions == -1 && c.deletions == -1).map((c) => c.reference).toList();
+    if (missing.isEmpty) return;
+
+    final stats = await GitManager.getCommitDiffStats(missing, repoIndex: repoIndex);
+    if (stats.isEmpty) return;
+
+    final byReference = current.map((c) {
+      final stat = stats[c.reference];
+      if (stat == null) return c;
+      return GitManagerRs.Commit(
+        timestamp: c.timestamp,
+        authorUsername: c.authorUsername,
+        authorEmail: c.authorEmail,
+        reference: c.reference,
+        commitMessage: c.commitMessage,
+        additions: stat.$1,
+        deletions: stat.$2,
+        unpulled: c.unpulled,
+        unpushed: c.unpushed,
+        tags: c.tags,
+      );
+    }).toList();
+
+    if (await _isCurrentIndex(repoIndex)) {
+      state = AsyncData(byReference);
+      await writeCache(manager, byReference);
+    }
+  }
+
+  @override
+  Future<List<GitManagerRs.Commit>?> refresh() {
+    return super.refresh();
+  }
+
   @override
   Future<void> writeCache(SettingsManager manager, List<GitManagerRs.Commit> value) =>
       manager.setStringList(StorageKey.setman_recentCommits, value.map((item) => utf8.fuse(base64).encode(jsonEncode(item.toJson()))).toList());
@@ -280,7 +342,9 @@ class RecentCommitsNotifier extends CachedGitNotifier<List<GitManagerRs.Commit>>
         }
         Logger.logError(LogType.Global, e, s);
       } finally {
-        if (!cancelled) ref.read(isLoadingCommitsProvider.notifier).state = false;
+        if (!cancelled) {
+          ref.read(isLoadingCommitsProvider.notifier).state = false;
+        }
       }
     }();
 
@@ -317,20 +381,13 @@ class RecommendedActionNotifier extends CachedGitNotifier<int?> {
   @override
   Future<void> writeCache(SettingsManager manager, int? value) => manager.setIntNullable(StorageKey.setman_recommendedAction, value);
 
+  @override
   Future<int?> refresh() async {
-    final repoIndex = await repoManager.getInt(StorageKey.repoman_repoIndex);
-    final manager = await SettingsManager.scoped(repoIndex);
-    final previous = state.valueOrNull;
+    state = const AsyncLoading<int?>().copyWithPrevious(state);
     try {
-      final live = await fetchLive();
-      if (await _isCurrentIndex(repoIndex)) {
-        state = AsyncData(live);
-        await writeCache(manager, live);
-      }
-      return live;
-    } catch (e) {
-      if (await _isCurrentIndex(repoIndex)) state = AsyncData(previous);
-      rethrow;
+      return await super.refresh();
+    } finally {
+      state = AsyncData(state.valueOrNull);
     }
   }
 }
@@ -533,6 +590,20 @@ class AiFeaturesEnabledNotifier extends AsyncNotifier<bool> {
 
 final aiFeaturesEnabledProvider = AsyncNotifierProvider<AiFeaturesEnabledNotifier, bool>(AiFeaturesEnabledNotifier.new);
 
+class ShowEditorExperimentalNoticeNotifier extends AsyncNotifier<bool> {
+  @override
+  Future<bool> build() => repoManager.getBool(StorageKey.repoman_showEditorExperimentalNotice);
+
+  void set(bool value) {
+    state = AsyncData(value);
+    repoManager.setBool(StorageKey.repoman_showEditorExperimentalNotice, value);
+  }
+}
+
+final showEditorExperimentalNoticeProvider = AsyncNotifierProvider<ShowEditorExperimentalNoticeNotifier, bool>(
+  ShowEditorExperimentalNoticeNotifier.new,
+);
+
 final aiKeyConfiguredProvider = StateProvider<bool>((ref) => false);
 
 class PremiumStatusNotifier extends Notifier<bool?> {
@@ -564,6 +635,16 @@ class RemoteNameNotifier extends SettingNotifier<String> {
 
 final remoteNameProvider = AsyncNotifierProvider<RemoteNameNotifier, String>(RemoteNameNotifier.new);
 
+class PinnedShowcaseFeaturesNotifier extends SettingNotifier<List<String>> {
+  @override
+  Future<List<String>> read() => uiSettingsManager.getStringList(StorageKey.setman_pinnedShowcaseFeatures);
+
+  @override
+  Future<void> write(List<String> value) => uiSettingsManager.setStringList(StorageKey.setman_pinnedShowcaseFeatures, value);
+}
+
+final pinnedShowcaseFeaturesProvider = AsyncNotifierProvider<PinnedShowcaseFeaturesNotifier, List<String>>(PinnedShowcaseFeaturesNotifier.new);
+
 class SubmodulePathsNotifier extends CachedGitNotifier<List<String>> {
   @override
   Future<List<String>> readCache(SettingsManager manager) => manager.getStringList(StorageKey.setman_submodulePaths);
@@ -572,9 +653,11 @@ class SubmodulePathsNotifier extends CachedGitNotifier<List<String>> {
   Future<List<String>> fetchLive() async {
     final dirPath = (await ref.read(gitDirPathProvider.future))?.$1;
     if (dirPath == null) return [];
-    return runGitOperation<List<String>>(LogType.GetSubmodules, (event) => (event?["result"] as List?)?.map<String>((path) => "$path").toList() ?? <String>[], {
-      "dir": dirPath,
-    });
+    return runGitOperation<List<String>>(
+      LogType.GetSubmodules,
+      (event) => (event?["result"] as List?)?.map<String>((path) => "$path").toList() ?? <String>[],
+      {"dir": dirPath},
+    );
   }
 
   @override

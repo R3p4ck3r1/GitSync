@@ -13,6 +13,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../constant/dimens.dart';
 import 'package:GitSync/api/manager/auth/github_manager.dart';
 import 'package:GitSync/api/manager/storage.dart';
+import 'package:GitSync/ui/dialog/info_dialog.dart' as InfoDialog;
+import 'package:GitSync/ui/component/button_setting.dart';
+import 'package:GitSync/api/manager/premium_manager.dart';
 
 const double _featureCardHeight =
     spaceXXXS * 2 +
@@ -212,9 +215,44 @@ class _UnlockPremiumState extends ConsumerState<UnlockPremium> {
     if (result == null) return;
 
     await repoManager.setStringNullable(StorageKey.repoman_ghSponsorToken, result.$3);
-    await premiumManager.updateGitHubSponsorPremium();
-    if (mounted && ref.read(premiumStatusProvider) == true) {
+    final check = await premiumManager.updateGitHubSponsorPremium();
+    if (!mounted) return;
+
+    if (ref.read(premiumStatusProvider) == true) {
       Navigator.pop(context, true);
+      return;
+    }
+
+    switch (check) {
+      case GhSponsorCheck.sponsor:
+        return;
+      case GhSponsorCheck.notSponsor:
+        await InfoDialog.showDialog(
+          context,
+          t.sponsorNotFoundTitle,
+          t.sponsorNotFoundMessage,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(height: spaceMD),
+              ButtonSetting(
+                text: t.becomeASponsor,
+                icon: FontAwesomeIcons.solidHeart,
+                onPressed: () async {
+                  final uri = Uri.parse(contributeLink);
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri);
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      case GhSponsorCheck.tokenRejected:
+        await InfoDialog.showDialog(context, t.sponsorCheckFailedTitle, t.sponsorCheckRejectedMessage);
+      case GhSponsorCheck.notLinked:
+      case GhSponsorCheck.unreachable:
+        await InfoDialog.showDialog(context, t.sponsorCheckFailedTitle, t.sponsorCheckFailedMessage);
     }
   }
 
@@ -384,7 +422,7 @@ class _UnlockPremiumState extends ConsumerState<UnlockPremium> {
                         constraints: BoxConstraints(minHeight: constraints.maxHeight),
                         child: Column(
                           children: [
-                            SizedBox(height: spaceLG),
+                            SizedBox(height: spaceXS),
                             Padding(
                               padding: EdgeInsets.symmetric(horizontal: spaceLG, vertical: spaceMD),
                               child: SizedBox(
@@ -401,7 +439,7 @@ class _UnlockPremiumState extends ConsumerState<UnlockPremium> {
                               ),
                             ),
                             Padding(
-                              padding: EdgeInsets.only(bottom: spaceXL),
+                              padding: EdgeInsets.only(bottom: spaceLG),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: List.generate(cards.length, (index) {
@@ -417,6 +455,35 @@ class _UnlockPremiumState extends ConsumerState<UnlockPremium> {
                                     ),
                                   );
                                 }),
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.only(bottom: spaceMD, left: spaceLG, right: spaceLG),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      FaIcon(FontAwesomeIcons.solidHeart, color: colours.premiumAccent, size: textXS),
+                                      SizedBox(width: spaceXS),
+                                      Text(
+                                        t.premiumIndieDevTitle.toUpperCase(),
+                                        style: TextStyle(color: colours.premiumAccent, fontSize: textXS, fontWeight: FontWeight.w900),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: spaceXS),
+                                  Text(
+                                    t.premiumIndieDevSubtitle,
+                                    style: TextStyle(
+                                      color: colours.premiumTextSecondary,
+                                      fontSize: textXS,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'AtkinsonHyperlegible',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
                               ),
                             ),
                             Padding(

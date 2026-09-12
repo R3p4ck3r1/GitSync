@@ -96,16 +96,18 @@ class ItemCommit extends ConsumerStatefulWidget {
   ConsumerState<ItemCommit> createState() => _ItemCommit();
 }
 
-class _ItemCommit extends ConsumerState<ItemCommit> {
+class _ItemCommit extends ConsumerState<ItemCommit> with SingleTickerProviderStateMixin {
   late Timer _timer;
   late String _relativeCommitDate;
   bool _menuOpen = false;
+  late final AnimationController _pulseController;
 
   @override
   void initState() {
     super.initState();
     _updateTime();
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) => _updateTime());
+    _pulseController = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
   }
 
   void _updateTime() {
@@ -119,6 +121,7 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
   @override
   void dispose() {
     _timer.cancel();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -173,7 +176,7 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
           'view',
           sprintf(t.menuViewOnProvider, [widget.gitProvider!.name]).toUpperCase(),
           t.menuViewOnProviderDesc,
-          enabled: widget.gitProvider?.isOAuthProvider == true && widget.remoteWebUrl != null,
+          enabled: widget.gitProvider?.isOAuthProvider == true && widget.remoteWebUrl != null && !widget.commit.unpushed,
         ),
       ],
     );
@@ -371,7 +374,7 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
                           children: [
                             Stack(
                               clipBehavior: Clip.none,
-                              alignment: Alignment.centerLeft,
+                              alignment: Alignment.centerRight,
                               children: [
                                 Padding(
                                   padding: EdgeInsets.only(right: widget.commit.tags.isEmpty ? 0 : widget.commit.tags.length.clamp(0, 4) * spaceSM),
@@ -393,11 +396,12 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
                                   ),
                                 ),
                                 for (int i = widget.commit.tags.length.clamp(0, 4) - 1; i >= 0; i--)
-                                  Positioned(
-                                    right: i * spaceSM,
+                                  Padding(
+                                    padding: EdgeInsets.only(right: i * spaceSM),
                                     child: Opacity(
                                       opacity: (1.0 - (i * 0.3)).clamp(0.0, 1.0),
                                       child: Container(
+                                        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.4),
                                         decoration: BoxDecoration(
                                           color: widget.commit.unpulled || widget.commit.unpushed ? colours.tertiaryDark : colours.secondaryLight,
                                           borderRadius: BorderRadius.all(cornerRadiusXS),
@@ -417,14 +421,18 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
                                               color: widget.commit.unpulled || widget.commit.unpushed ? colours.secondaryLight : colours.tertiaryDark,
                                             ),
                                             SizedBox(width: spaceXXXXS),
-                                            Text(
-                                              widget.commit.tags[i].toUpperCase(),
-                                              style: TextStyle(
-                                                color: widget.commit.unpulled || widget.commit.unpushed
-                                                    ? colours.secondaryLight
-                                                    : colours.tertiaryDark,
-                                                fontSize: textXS,
-                                                fontWeight: FontWeight.bold,
+                                            Flexible(
+                                              child: Text(
+                                                widget.commit.tags[i].toUpperCase(),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: widget.commit.unpulled || widget.commit.unpushed
+                                                      ? colours.secondaryLight
+                                                      : colours.tertiaryDark,
+                                                  fontSize: textXS,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
                                               ),
                                             ),
                                           ],
@@ -435,26 +443,69 @@ class _ItemCommit extends ConsumerState<ItemCommit> {
                               ],
                             ),
                             SizedBox(height: spaceXXXS),
-                            Row(
-                              children: [
-                                Text(
-                                  sprintf(t.additions, [widget.commit.additions]),
-                                  style: TextStyle(
-                                    color: widget.commit.unpulled || widget.commit.unpushed ? colours.secondaryPositive : colours.tertiaryPositive,
-                                    fontSize: textXS,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                SizedBox(width: spaceSM),
-                                Text(
-                                  sprintf(t.deletions, [widget.commit.deletions]),
-                                  style: TextStyle(
-                                    color: widget.commit.unpulled || widget.commit.unpushed ? colours.primaryNegative : colours.tertiaryNegative,
-                                    fontSize: textXS,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ],
+                            AnimatedSwitcher(
+                              duration: animFast,
+                              layoutBuilder: (currentChild, previousChildren) => Stack(
+                                alignment: Alignment.centerLeft,
+                                children: [...previousChildren, if (currentChild != null) currentChild],
+                              ),
+                              child: widget.commit.additions == -1 && widget.commit.deletions == -1
+                                  ? SizedBox(
+                                      key: const ValueKey('diff-pending'),
+                                      height: textXS * 1.5,
+                                      child: Row(
+                                        children: [
+                                          FadeTransition(
+                                            opacity: _pulseController,
+                                            child: Container(
+                                              width: textSM * 3,
+                                              height: textXS * 0.9,
+                                              decoration: BoxDecoration(
+                                                color: colours.secondaryLight.withValues(alpha: 0.5),
+                                                borderRadius: BorderRadius.all(cornerRadiusXS),
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(width: spaceSM),
+                                          FadeTransition(
+                                            opacity: _pulseController,
+                                            child: Container(
+                                              width: textSM * 3,
+                                              height: textXS * 0.9,
+                                              decoration: BoxDecoration(
+                                                color: colours.secondaryLight.withValues(alpha: 0.5),
+                                                borderRadius: BorderRadius.all(cornerRadiusXS),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : SizedBox(
+                                      key: const ValueKey('diff-loaded'),
+                                      height: textXS * 1.5,
+                                      child: Row(
+                                        children: [
+                                          Text(
+                                            sprintf(t.additions, [widget.commit.additions]),
+                                            style: TextStyle(
+                                              color: widget.commit.unpulled || widget.commit.unpushed ? colours.secondaryPositive : colours.tertiaryPositive,
+                                              fontSize: textXS,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                          SizedBox(width: spaceSM),
+                                          Text(
+                                            sprintf(t.deletions, [widget.commit.deletions]),
+                                            style: TextStyle(
+                                              color: widget.commit.unpulled || widget.commit.unpushed ? colours.primaryNegative : colours.tertiaryNegative,
+                                              fontSize: textXS,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                             ),
                           ],
                         ),

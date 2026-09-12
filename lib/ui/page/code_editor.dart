@@ -8,12 +8,14 @@ import 'package:GitSync/api/manager/storage.dart';
 import 'package:GitSync/constant/dimens.dart';
 import 'package:GitSync/constant/values.dart';
 import 'package:GitSync/global.dart';
+import 'package:GitSync/providers/riverpod_providers.dart';
 import 'package:GitSync/ui/component/button_setting.dart';
 import 'package:GitSync/ui/component/code_line_number_render_object.dart';
 import 'package:GitSync/ui/dialog/info_dialog.dart' as InfoDialog;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:mmap2/mmap2.dart';
 import 'package:mmap2_flutter/mmap2_flutter.dart';
@@ -345,7 +347,7 @@ class _CodeEditor extends State<CodeEditor> {
   }
 }
 
-class Editor extends StatefulWidget {
+class Editor extends ConsumerStatefulWidget {
   const Editor({super.key, this.verticalScrollController, this.text, this.path, this.type = EditorType.DEFAULT});
 
   final String? text;
@@ -354,11 +356,12 @@ class Editor extends StatefulWidget {
   final ScrollController? verticalScrollController;
 
   @override
-  State<Editor> createState() => _EditorState();
+  ConsumerState<Editor> createState() => _EditorState();
 }
 
-class _EditorState extends State<Editor> with WidgetsBindingObserver {
+class _EditorState extends ConsumerState<Editor> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final fileSaving = ValueNotifier(false);
+  late final AnimationController thumbAnimationController;
   final ReEditor.CodeLineEditingController controller = ReEditor.CodeLineEditingController();
   final ScrollController horizontalController = ScrollController();
   ScrollController verticalController = ScrollController();
@@ -372,6 +375,7 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    thumbAnimationController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
     MmapFlutter.initialize();
 
     initAsync(() async {
@@ -505,6 +509,7 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    thumbAnimationController.dispose();
     controller.removeListener(_onTextChanged);
     writeMmap?.sync();
     writeMmap?.close();
@@ -549,6 +554,19 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
               await Logger.reportIssue(context, From.CODE_EDITOR);
             },
           ),
+          SizedBox(height: spaceSM),
+          Builder(
+            builder: (dialogContext) => ButtonSetting(
+              text: t.dontShowAgain,
+              icon: FontAwesomeIcons.eyeSlash,
+              textColor: colours.secondaryLight,
+              iconColor: colours.secondaryLight,
+              onPressed: () async {
+                ref.read(showEditorExperimentalNoticeProvider.notifier).set(false);
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -556,6 +574,8 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final showExperimentalNotice = ref.watch(showEditorExperimentalNoticeProvider).valueOrNull ?? true;
+
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -573,6 +593,36 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
                   controller: controller,
                   scrollController: ReEditor.CodeScrollController(verticalScroller: verticalController, horizontalScroller: horizontalController),
                   wordWrap: editorLineWrap,
+                  scrollbarBuilder: (context, child, details) {
+                    if (details.direction != AxisDirection.down) {
+                      return Scrollbar(controller: details.controller, scrollbarOrientation: ScrollbarOrientation.bottom, child: child);
+                    }
+                    return AnimatedBuilder(
+                      animation: thumbAnimationController,
+                      builder: (context, _) {
+                        final double t = Curves.easeOut.transform(thumbAnimationController.value);
+                        return _ThumbAwareScrollbar(
+                          onThumbPressChanged: (pressed) {
+                            if (pressed) {
+                              thumbAnimationController.forward();
+                            } else {
+                              thumbAnimationController.reverse();
+                            }
+                          },
+                          controller: details.controller,
+                          scrollbarOrientation: ScrollbarOrientation.right,
+                          thumbVisibility: true,
+                          interactive: true,
+                          thickness: spaceXS + (spaceMD - spaceXS) * t,
+                          radius: cornerRadiusXS,
+                          minThumbLength: spaceLG,
+                          thumbColor: Color.lerp(colours.secondaryLight, colours.primaryInfo, t),
+                          child: child,
+                        );
+                      },
+                      child: child,
+                    );
+                  },
                   chunkAnalyzer: widget.type == EditorType.LOGS ? LogsChunkAnalyzer() : ReEditor.DefaultCodeChunkAnalyzer(),
                   style: ReEditor.CodeEditorStyle(
                     textColor: colours.tertiaryLight,
@@ -697,7 +747,7 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
                   },
                 ),
         ),
-        if (widget.type == EditorType.DEFAULT)
+        if (widget.type == EditorType.DEFAULT && showExperimentalNotice)
           Positioned(
             bottom: spaceXXL,
             child: GestureDetector(
@@ -753,6 +803,40 @@ class _EditorState extends State<Editor> with WidgetsBindingObserver {
             : SizedBox.shrink(),
       ],
     );
+  }
+}
+
+class _ThumbAwareScrollbar extends RawScrollbar {
+  const _ThumbAwareScrollbar({
+    required super.controller,
+    required super.child,
+    super.scrollbarOrientation,
+    super.thumbVisibility,
+    super.interactive,
+    super.thickness,
+    super.radius,
+    super.minThumbLength,
+    super.thumbColor,
+    required this.onThumbPressChanged,
+  });
+
+  final ValueChanged<bool> onThumbPressChanged;
+
+  @override
+  RawScrollbarState<_ThumbAwareScrollbar> createState() => _ThumbAwareScrollbarState();
+}
+
+class _ThumbAwareScrollbarState extends RawScrollbarState<_ThumbAwareScrollbar> {
+  @override
+  void handleThumbPressStart(Offset localPosition) {
+    widget.onThumbPressChanged(true);
+    super.handleThumbPressStart(localPosition);
+  }
+
+  @override
+  void handleThumbPressEnd(Offset localPosition, Velocity velocity) {
+    widget.onThumbPressChanged(false);
+    super.handleThumbPressEnd(localPosition, velocity);
   }
 }
 

@@ -12,6 +12,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get dismiss => 'Descartar';
 
   @override
+  String get dontShowAgain => 'No volver a mostrar';
+
+  @override
   String get skip => 'Omitir';
 
   @override
@@ -220,6 +223,12 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get premiumHookDetectPrivateKey => 'detect-private-key';
+
+  @override
+  String get premiumIndieDevTitle => 'Built by one developer';
+
+  @override
+  String get premiumIndieDevSubtitle => 'GitSync is an independent project, not a company. Buying Premium pays for the time that goes into it.';
 
   @override
   String get switchToClientMode => 'Cambiar a Modo Cliente…';
@@ -815,6 +824,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get commitsNotFound => 'Sin confirmaciones…';
 
   @override
+  String get filesNotFound => 'No files found…';
+
+  @override
   String get repoNotFound => 'Sin repositorio…';
 
   @override
@@ -1364,6 +1376,25 @@ class AppLocalizationsEs extends AppLocalizations {
   String get requestAFeature => 'Solicitar una Función';
 
   @override
+  String get sponsorCheckFailedTitle => 'Sponsor Check Failed';
+
+  @override
+  String get sponsorCheckFailedMessage => 'We could not reach GitHub to check your sponsorship. Check your connection and try again.';
+
+  @override
+  String get sponsorCheckRejectedMessage => 'GitHub rejected the linked account. Please sign in again.';
+
+  @override
+  String get sponsorNotFoundTitle => 'No Sponsorship Found';
+
+  @override
+  String get sponsorNotFoundMessage =>
+      'This GitHub account is not in the sponsor list. A new sponsorship can take up to a day to become active in the app.';
+
+  @override
+  String get becomeASponsor => 'Become A Sponsor';
+
+  @override
   String get contributeTitle => 'Apoya Nuestro Trabajo';
 
   @override
@@ -1413,6 +1444,9 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get directory => 'Directorio';
+
+  @override
+  String get confirmFileDirDeleteTitle => 'Confirm Deletion';
 
   @override
   String get confirmFileDirDeleteMsg => '¿Seguro que quieres eliminar %s «%s» %s?';
@@ -1477,6 +1511,12 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get viewGitLogDescription => 'Ver el historial completo de git';
+
+  @override
+  String get openInTextastic => 'Open in Textastic';
+
+  @override
+  String get openInTextasticDescription => 'Open file in Textastic app';
 
   @override
   String get ignoreUntrack => '.gitignore + Quitar del stage';
@@ -1925,6 +1965,35 @@ class AppLocalizationsEs extends AppLocalizations {
   String get actionFilterFailed => 'Fallidas';
 
   @override
+  String get mergeRequests => 'Merge Requests';
+
+  @override
+  String get jobs => 'Jobs';
+
+  @override
+  String get comment => 'Comment';
+
+  @override
+  String get downloading => 'Downloading…';
+
+  @override
+  String get downloadFailed => 'Download failed';
+
+  @override
+  String savedTo(Object name) {
+    return 'Saved to $name';
+  }
+
+  @override
+  String get saveArchive => 'Save archive';
+
+  @override
+  String get saveAsset => 'Save asset';
+
+  @override
+  String get useOffline => 'Use Offline';
+
+  @override
   String get attemptAutoFix => '¿Intentar Reparación Automática?';
 
   @override
@@ -2054,6 +2123,32 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get trackIssue => 'Rastrear Problema';
+
+  @override
+  String get issueDuplicateTitle => 'Already Reported';
+
+  @override
+  String get issueDuplicateMsg =>
+      'This bug has already been reported and is being tracked in an open issue. \n\nOpen the issue to follow progress, or send your report as a message there so it reaches us without creating a duplicate.';
+
+  @override
+  String get viewIssue => 'View Issue';
+
+  @override
+  String get sendMessage => 'Send As Message';
+
+  @override
+  String get issueCommentSuccessTitle => 'Message Sent';
+
+  @override
+  String get issueCommentSuccessMsg =>
+      'Your report has been added to the existing issue. Bookmark this page to track progress and respond to messages. \n\nIssues with no activity for 7 days are automatically closed.';
+
+  @override
+  String get issueCommentFailedMsg => 'Your message couldn’t be sent. Please check your connection and try again.';
+
+  @override
+  String get issueReportFailedMsg => 'Your report couldn’t be sent. Please check your connection and try again.';
 
   @override
   String get createNewRepository => 'Crear nuevo repositorio';
@@ -2360,4 +2455,16 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get aiSetupMsg => 'Configura un proveedor de IA para usar esta función. ¿Ir a ajustes de IA?';
+
+  @override
+  String get aiAlwaysAllowSession => 'Always allow this session';
+
+  @override
+  String get aiAllowAllEdits => 'Allow all edits this session';
+
+  @override
+  String get aiRateLimited => 'Rate limited. Your chat is saved. Wait a moment, then send again to carry on.';
+
+  @override
+  String get aiStopGeneratingMsg => 'This will cancel the current response. Any partial output will be kept.';
 }

@@ -321,6 +321,7 @@ class _PrDetailPageState extends ConsumerState<PrDetailPage> with SingleTickerPr
                         ],
                       ),
                     ],
+                    getOpenInBrowserButton(widget.gitProvider.pullRequestUrl(widget.remoteWebUrl, widget.prNumber)),
                   ],
                 ),
               ),
@@ -971,7 +972,7 @@ class _PrDetailPageState extends ConsumerState<PrDetailPage> with SingleTickerPr
                           child: CircularProgressIndicator(color: colours.secondaryLight, strokeWidth: spaceXXXXS),
                         )
                       : Text(
-                          "Comment".toUpperCase(),
+                          t.comment.toUpperCase(),
                           style: TextStyle(color: colours.tertiaryInfo, fontSize: textSM, fontWeight: FontWeight.bold),
                         ),
                 ),
